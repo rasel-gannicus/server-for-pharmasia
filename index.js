@@ -26,30 +26,100 @@ async function run() {
     const userDb = client.db("Pharmasia").collection("users");
 
     // --- adding user data
+
+    // app.patch("/api/v1/addUserData", async (req, res) => {
+    //   const userData = req.body;
+    //   console.log("user before : ", req.body);
+
+    //   const filter = { email: req.body.email };
+    //   const options = { upsert: true };
+
+    //   // Remove the _id field if it exists in the request body
+    //   if (userData._id) {
+    //     delete userData._id;
+    //   }
+
+    //   const update = { $set: userData };
+
+    //   try {
+    //     const result = await userDb.updateOne(filter, update, options);
+
+    //     console.log(result);
+
+    //     res.status(200).json({ message: "User updated successfully", result });
+    //   } catch (error) {
+    //     console.error(error);
+    //     res.status(500).json({ message: "Error updating user data", error });
+    //   }
+    // });
+
     app.patch("/api/v1/addUserData", async (req, res) => {
-      const userData = req.body;
-      console.log("user before : ", req.body);
-
-      const filter = { email: req.body.email };
+      const { email, product } = req.body;
+      
+      const filter = { email };
       const options = { upsert: true };
-
+    
       // Remove the _id field if it exists in the request body
-      if (userData._id) {
-        delete userData._id;
+      if (req.body._id) {
+        delete req.body._id;
       }
-      console.log('user after :  ', userData);
-      const update = { $set: userData };
+    
       try {
-        const result = await userDb.updateOne(filter, update, options);
-
-        console.log(result);
-
-        res.status(200).json({ message: "User updated successfully", result });
+        if (product) {
+          // If product data is present, handle product addition logic
+          const user = await userDb.findOne(filter);
+    
+          if (user) {
+            // Ensure products array exists
+            const products = user.products || [];
+    
+            const existingProduct = products.find((p) => p._id === product._id);
+    
+            if (existingProduct) {
+              // Product exists, so increase the quantity
+              const updatedProducts = products.map((p) =>
+                p._id === product._id ? { ...p, quantity: p.quantity + 1 } : p
+              );
+    
+              await userDb.updateOne(
+                filter,
+                { $set: { products: updatedProducts } },
+                options
+              );
+            } else {
+              // Product doesn't exist, add it to the array with quantity 1
+              product.quantity = 1;
+              await userDb.updateOne(
+                filter,
+                { $push: { products: product } },
+                options
+              );
+            }
+          } else {
+            // If the user doesn't exist, create a new user with the product in the array
+            product.quantity = 1;
+            const newUser = {
+              email,
+              products: [product],
+              // Include any other default fields here if needed
+            };
+            await userDb.updateOne(filter, { $set: newUser }, options);
+          }
+        } else {
+          // If no product data is present, assume this is a request to add/update user info only
+          const update = { $set: req.body };
+          await userDb.updateOne(filter, update, options);
+        }
+    
+        res.status(200).json({ message: "User updated successfully" });
       } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Error updating user data", error });
       }
     });
+    
+    
+    
 
     //-- getting user info
     app.get("/api/v1/userInfo/:email", async (req, res) => {
