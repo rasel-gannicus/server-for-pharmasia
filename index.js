@@ -25,101 +25,176 @@ async function run() {
   try {
     const userDb = client.db("Pharmasia").collection("users");
 
-    // --- adding user data
+    // --- adding new user to database after user register or logged in client site
+    app.post("/api/v1/addUserData", async (req, res) => {
+      const userData = req.body;
+      console.log(req.body.email);
 
-    // app.patch("/api/v1/addUserData", async (req, res) => {
-    //   const userData = req.body;
-    //   console.log("user before : ", req.body);
+      const filter = { email: req.body.email };
+      const options = { upsert: true }; // This will insert a new document if no document matches the filter.
 
-    //   const filter = { email: req.body.email };
-    //   const options = { upsert: true };
+      const update = { $set: userData };
 
-    //   // Remove the _id field if it exists in the request body
-    //   if (userData._id) {
-    //     delete userData._id;
-    //   }
-
-    //   const update = { $set: userData };
-
-    //   try {
-    //     const result = await userDb.updateOne(filter, update, options);
-
-    //     console.log(result);
-
-    //     res.status(200).json({ message: "User updated successfully", result });
-    //   } catch (error) {
-    //     console.error(error);
-    //     res.status(500).json({ message: "Error updating user data", error });
-    //   }
-    // });
-
-    app.patch("/api/v1/addUserData", async (req, res) => {
-      const { email, product } = req.body;
-      
-      const filter = { email };
-      const options = { upsert: true };
-    
-      // Remove the _id field if it exists in the request body
-      if (req.body._id) {
-        delete req.body._id;
-      }
-    
       try {
-        if (product) {
-          // If product data is present, handle product addition logic
-          const user = await userDb.findOne(filter);
-    
-          if (user) {
-            // Ensure products array exists
-            const products = user.products || [];
-    
-            const existingProduct = products.find((p) => p._id === product._id);
-    
-            if (existingProduct) {
-              // Product exists, so increase the quantity
-              const updatedProducts = products.map((p) =>
-                p._id === product._id ? { ...p, quantity: p.quantity + 1 } : p
-              );
-    
-              await userDb.updateOne(
-                filter,
-                { $set: { products: updatedProducts } },
-                options
-              );
-            } else {
-              // Product doesn't exist, add it to the array with quantity 1
-              product.quantity = 1;
-              await userDb.updateOne(
-                filter,
-                { $push: { products: product } },
-                options
-              );
-            }
-          } else {
-            // If the user doesn't exist, create a new user with the product in the array
-            product.quantity = 1;
-            const newUser = {
-              email,
-              products: [product],
-              // Include any other default fields here if needed
-            };
-            await userDb.updateOne(filter, { $set: newUser }, options);
-          }
+        const result = await userDb.updateOne(filter, update, options); // Use updateOne instead of insertOne.
+
+        console.log(result);
+
+        if (result.upsertedCount > 0) {
+          res
+            .status(201)
+            .json({ message: "New user created successfully", result });
         } else {
-          // If no product data is present, assume this is a request to add/update user info only
-          const update = { $set: req.body };
-          await userDb.updateOne(filter, update, options);
+          res
+            .status(200)
+            .json({ message: "User updated successfully", result });
         }
-    
-        res.status(200).json({ message: "User updated successfully" });
       } catch (error) {
         console.error(error);
-        res.status(500).json({ message: "Error updating user data", error });
+        res
+          .status(500)
+          .json({ message: "Error updating or creating user data", error });
       }
     });
-    
-    
-    
+
+    // --- add a new product to cart
+    app.post("/api/v1/addToCart", async (req, res) => {
+      const { email, product, status } = req.body; // Expecting email, product data, and status in the request body
+      console.log(req.body);
+
+      try {
+        // Find the user and check if the product already exists in the cart
+        const user = await userDb.findOne({ email });
+
+        if (user) {
+          // Ensure the cart array exists
+          if (!user.cart) {
+            user.cart = [];
+          }
+
+          const productIndex = user.cart.findIndex(
+            (item) => item._id === product._id
+          );
+
+          let result;
+
+          if (productIndex !== -1) {
+            // Product already exists in the cart
+            if (status === "pending") {
+              // Increase quantity if status is 'pending'
+              result = await userDb.updateOne(
+                { email, "cart._id": product._id },
+                {
+                  $inc: { "cart.$.quantity": 1 },
+                  $set: { "cart.$.status": status },
+                }
+              );
+
+              res.status(200).json({
+                message:
+                  "Product quantity increased and status updated in the cart",
+                result,
+              });
+            } else if (status === "confirmed") {
+              // Only update the status if it's 'confirmed'
+              result = await userDb.updateOne(
+                { email, "cart._id": product._id },
+                { $set: { "cart.$.status": status } }
+              );
+
+              res.status(200).json({
+                message: "Product status updated to confirmed in the cart",
+                result,
+              });
+            }
+          } else {
+            // Product doesn't exist in the cart, so add it with a quantity of 1 and status
+            const newProduct = { ...product, quantity: 1, status };
+            result = await userDb.updateOne(
+              { email },
+              { $push: { cart: newProduct } }
+            );
+
+            res.status(200).json({
+              message: "Product added to the cart with status",
+              result,
+            });
+          }
+        } else {
+          // If the user doesn't exist, return an error
+          res.status(404).json({ message: "User not found" });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Error updating cart", error });
+      }
+    });
+
+    // --- modifying cart - increase, decrease , delete
+    app.patch("/api/v1/modifyCart", async (req, res) => {
+      try {
+        const { data, email, modifyType } = req.body;
+        const { _id: productId } = data;
+        console.log({ modifyType });
+        // console.log(req.body);
+
+        const filter = { email, "cart._id": productId };
+        const update = {};
+
+        switch (modifyType) {
+          case "increase":
+            update["$inc"] = { "cart.$.quantity": 1 };
+            break;
+          case "decrease":
+            update["$inc"] = { "cart.$.quantity": -1 };
+            break;
+          case "delete":
+            update["$set"] = { "cart.$.status": "deleted" };
+            break;
+          case "confirmed":
+            update["$set"] = { "cart.$.status": "confirmed" };
+            break;
+          default:
+            return res.status(400).json({ error: "Invalid modifyType" });
+        }
+
+        const result = await userDb.updateOne(filter, update);
+
+        if (result.matchedCount > 0) {
+          res.json({ message: "Cart updated successfully" });
+          console.log("updated");
+        } else {
+          res.status(404).json({ error: "User or product not found" });
+          console.log("error");
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // --- Get cart information for a user
+    app.get("/api/v1/getCart", async (req, res) => {
+      const { email } = req.query; // Expecting the user's email in the query string
+
+      try {
+        // Find the user by email
+        const user = await userDb.findOne({ email });
+
+        if (user && user.cart) {
+          // Return the user's cart information
+          res.status(200).json({ cart: user.cart });
+        } else {
+          // If the user doesn't exist or has an empty cart, return an empty array
+          res.status(200).json({ cart: [] });
+        }
+      } catch (error) {
+        console.error(error);
+        res
+          .status(500)
+          .json({ message: "Error retrieving cart information", error });
+      }
+    });
 
     //-- getting user info
     app.get("/api/v1/userInfo/:email", async (req, res) => {
