@@ -106,19 +106,45 @@ async function run() {
                 message: "Product status updated to confirmed in the cart",
                 result,
               });
+            } else if (status === "wishlist") {
+              // Only update the status if it's 'wishlist'
+              result = await userDb.updateOne(
+                { email, "cart._id": product._id },
+                { $set: { "cart.$.wishlist": true } }
+              );
+
+              res.status(200).json({
+                message: "Product status updated to confirmed in the cart",
+                result,
+              });
             }
           } else {
-            // Product doesn't exist in the cart, so add it with a quantity of 1 and status
-            const newProduct = { ...product, quantity: 1, status };
-            result = await userDb.updateOne(
-              { email },
-              { $push: { cart: newProduct } }
-            );
+            
+            if (status === "wishlist") {
+              // Product doesn't exist in the cart, so add it with a quantity of 1 and status
+              const newProduct = { ...product, wishlist : true };
+              result = await userDb.updateOne(
+                { email },
+                { $push: { cart: newProduct } }
+              );
 
-            res.status(200).json({
-              message: "Product added to the cart with status",
-              result,
-            });
+              res.status(200).json({
+                message: "Product added to the cart with status",
+                result,
+              });
+            } else {
+              // Product doesn't exist in the cart, so add it with a quantity of 1 and status
+              const newProduct = { ...product, quantity: 1, status };
+              result = await userDb.updateOne(
+                { email },
+                { $push: { cart: newProduct } }
+              );
+
+              res.status(200).json({
+                message: "Product added to the cart with status",
+                result,
+              });
+            }
           }
         } else {
           // If the user doesn't exist, return an error
@@ -141,15 +167,44 @@ async function run() {
         const filter = { email, "cart._id": productId };
         const update = {};
 
+        let currentQuantity;
+        // Step 1: Retrieve the current quantity
+        const user = await userDb.findOne(filter);
+        if (user) {
+          const cartItem = user.cart.find(
+            (item) => item._id.toString() === productId
+          );
+          if (cartItem) {
+            currentQuantity = cartItem.quantity;
+          } else {
+            return res.status(404).json({ error: "Product not found in cart" });
+          }
+        } else {
+          return res.status(404).json({ error: "User not found" });
+        }
+
         switch (modifyType) {
           case "increase":
-            update["$inc"] = { "cart.$.quantity": 1 };
+            if (currentQuantity < 5) {
+              update["$inc"] = { "cart.$.quantity": 1 };
+            } else {
+              return res
+                .status(400)
+                .json({ error: "Cannot increase quantity above 5" });
+            }
             break;
           case "decrease":
-            update["$inc"] = { "cart.$.quantity": -1 };
+            if (currentQuantity > 1) {
+              update["$inc"] = { "cart.$.quantity": -1 };
+            } else {
+              return res
+                .status(400)
+                .json({ error: "Cannot decrease quantity below 1" });
+            }
             break;
           case "delete":
             update["$set"] = { "cart.$.status": "deleted" };
+            update["$set"] = { "cart.$.quantity": 0 };
             break;
           case "confirmed":
             update["$set"] = { "cart.$.status": "confirmed" };
