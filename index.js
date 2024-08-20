@@ -92,7 +92,7 @@ async function run() {
 
               res.status(200).json({
                 message:
-                  "Product quantity increased and status updated in the cart",
+                  "Product added to the cart ",
                 result,
               });
             } else if (status === "confirmed") {
@@ -103,7 +103,7 @@ async function run() {
               );
 
               res.status(200).json({
-                message: "Product status updated to confirmed in the cart",
+                message: "Thank you for your order !",
                 result,
               });
             } else if (status === "wishlist") {
@@ -114,7 +114,7 @@ async function run() {
               );
 
               res.status(200).json({
-                message: "Product status updated to confirmed in the cart",
+                message: "Product added to the Wishlist",
                 result,
               });
             }
@@ -129,7 +129,7 @@ async function run() {
               );
 
               res.status(200).json({
-                message: "Product added to the cart with status",
+                message: "Product added to the Wishlist",
                 result,
               });
             } else {
