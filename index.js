@@ -91,8 +91,7 @@ async function run() {
               );
 
               res.status(200).json({
-                message:
-                  "Product added to the cart ",
+                message: "Product added to the cart ",
                 result,
               });
             } else if (status === "confirmed") {
@@ -119,10 +118,9 @@ async function run() {
               });
             }
           } else {
-            
             if (status === "wishlist") {
               // Product doesn't exist in the cart, so add it with a quantity of 1 and status
-              const newProduct = { ...product, wishlist : true };
+              const newProduct = { ...product, wishlist: true };
               result = await userDb.updateOne(
                 { email },
                 { $push: { cart: newProduct } }
@@ -141,7 +139,7 @@ async function run() {
               );
 
               res.status(200).json({
-                message: "Product added to the cart with status",
+                message: "Product added to the cart ",
                 result,
               });
             }
@@ -209,6 +207,11 @@ async function run() {
           case "confirmed":
             update["$set"] = { "cart.$.status": "confirmed" };
             break;
+
+          case "wishlist_false":
+            update["$set"] = { "cart.$.wishlist": false };
+            break;
+            
           default:
             return res.status(400).json({ error: "Invalid modifyType" });
         }
