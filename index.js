@@ -154,8 +154,8 @@ async function run() {
       }
     });
 
-    // --- modifying cart - increase, decrease , delete
-    app.patch("/api/v1/modifyCart", async (req, res) => {
+    // --- modifying cart - increase, decrease , delete, order confirmation
+    /*     app.patch("/api/v1/modifyCart", async (req, res) => {
       try {
         const { data, email, modifyType } = req.body;
         const { _id: productId } = data;
@@ -191,6 +191,7 @@ async function run() {
                 .json({ error: "Cannot increase quantity above 5" });
             }
             break;
+
           case "decrease":
             if (currentQuantity > 1) {
               update["$inc"] = { "cart.$.quantity": -1 };
@@ -211,7 +212,7 @@ async function run() {
           case "wishlist_false":
             update["$set"] = { "cart.$.wishlist": false };
             break;
-            
+
           default:
             return res.status(400).json({ error: "Invalid modifyType" });
         }
@@ -224,6 +225,132 @@ async function run() {
         } else {
           res.status(404).json({ error: "User or product not found" });
           console.log("error");
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    }); */
+    app.patch("/api/v1/modifyCart", async (req, res) => {
+      try {
+        let { data, email, modifyType } = req.body; // `data` is now an array of products
+        if (!Array.isArray(data) || data.length === 0) {
+          data = [data];
+          // return res
+          //   .status(400)
+          //   .json({ error: "Invalid or empty product array" });
+        }
+
+        const user = await userDb.findOne({ email });
+        if (!user) {
+          return res.status(404).json({ error: "User not found" });
+        }
+
+        const updates = data.map((product) => {
+          const { _id: productId } = product;
+          const cartItem = user.cart.find(
+            (item) => item._id.toString() === productId
+          );
+
+          if (!cartItem) {
+            return {
+              productId,
+              status: 404,
+              message: "Product not found in cart",
+            };
+          }
+
+          let update = {};
+
+          switch (modifyType) {
+            case "increase":
+              if (cartItem.quantity < 5) {
+                update["$inc"] = { "cart.$[elem].quantity": 1 };
+              } else {
+                return {
+                  productId,
+                  status: 400,
+                  message: "Cannot increase quantity above 5",
+                };
+              }
+              break;
+
+            case "decrease":
+              if (cartItem.quantity > 1) {
+                update["$inc"] = { "cart.$[elem].quantity": -1 };
+              } else {
+                return {
+                  productId,
+                  status: 400,
+                  message: "Cannot decrease quantity below 1",
+                };
+              }
+              break;
+
+            case "delete":
+              update["$set"] = {
+                "cart.$[elem].status": "deleted",
+                "cart.$[elem].quantity": 0,
+              };
+              break;
+
+            case "confirmed":
+              update["$set"] = {
+                "cart.$[elem].status": "confirmed",
+                "cart.$[elem].quantity": 0,
+              };
+              break;
+
+            case "wishlist_false":
+              update["$set"] = { "cart.$[elem].wishlist": false };
+              break;
+
+            default:
+              return { productId, status: 400, message: "Invalid modifyType" };
+          }
+
+          return {
+            filter: { email, "cart._id": productId },
+            update,
+            arrayFilters: [{ "elem._id": productId }],
+            productId,
+          };
+        });
+
+        // Execute all updates
+        const results = await Promise.all(
+          updates.map(async (operation) => {
+            if (operation.status) {
+              return operation; // This is an error operation
+            }
+
+            const { filter, update, arrayFilters } = operation;
+            const result = await userDb.updateOne(filter, update, {
+              arrayFilters,
+            });
+
+            if (result.matchedCount > 0) {
+              return {
+                productId: operation.productId,
+                status: 200,
+                message: "Cart updated successfully",
+              };
+            } else {
+              return {
+                productId: operation.productId,
+                status: 404,
+                message: "User or product not found",
+              };
+            }
+          })
+        );
+
+        // Handle responses
+        const errors = results.filter((result) => result.status !== 200);
+        if (errors.length > 0) {
+          res.status(400).json({ message: "Some operations failed", errors });
+        } else {
+          res.json({ message: "All cart items updated successfully" });
         }
       } catch (error) {
         console.error(error);
@@ -257,6 +384,7 @@ async function run() {
     //-- getting user info
     app.get("/api/v1/userInfo/:email", async (req, res) => {
       const { email } = req.params;
+      console.log(req.params);
       try {
         const user = await userDb.findOne({ email });
         if (user) {
