@@ -28,7 +28,6 @@ async function run() {
     // --- adding new user to database after user register or logged in client site
     app.post("/api/v1/addUserData", async (req, res) => {
       const userData = req.body;
-      console.log(req.body.email);
 
       const filter = { email: req.body.email };
       const options = { upsert: true }; // This will insert a new document if no document matches the filter.
@@ -37,8 +36,6 @@ async function run() {
 
       try {
         const result = await userDb.updateOne(filter, update, options); // Use updateOne instead of insertOne.
-
-        console.log(result);
 
         if (result.upsertedCount > 0) {
           res
@@ -60,7 +57,6 @@ async function run() {
     // --- add a new product to cart
     app.post("/api/v1/addToCart", async (req, res) => {
       const { email, product, status } = req.body; // Expecting email, product data, and status in the request body
-      console.log(req.body);
 
       try {
         // Find the user and check if the product already exists in the cart
@@ -154,83 +150,7 @@ async function run() {
       }
     });
 
-    // --- modifying cart - increase, decrease , delete, order confirmation
-    /*     app.patch("/api/v1/modifyCart", async (req, res) => {
-      try {
-        const { data, email, modifyType } = req.body;
-        const { _id: productId } = data;
-        console.log({ modifyType });
-        // console.log(req.body);
-
-        const filter = { email, "cart._id": productId };
-        const update = {};
-
-        let currentQuantity;
-        // Step 1: Retrieve the current quantity
-        const user = await userDb.findOne(filter);
-        if (user) {
-          const cartItem = user.cart.find(
-            (item) => item._id.toString() === productId
-          );
-          if (cartItem) {
-            currentQuantity = cartItem.quantity;
-          } else {
-            return res.status(404).json({ error: "Product not found in cart" });
-          }
-        } else {
-          return res.status(404).json({ error: "User not found" });
-        }
-
-        switch (modifyType) {
-          case "increase":
-            if (currentQuantity < 5) {
-              update["$inc"] = { "cart.$.quantity": 1 };
-            } else {
-              return res
-                .status(400)
-                .json({ error: "Cannot increase quantity above 5" });
-            }
-            break;
-
-          case "decrease":
-            if (currentQuantity > 1) {
-              update["$inc"] = { "cart.$.quantity": -1 };
-            } else {
-              return res
-                .status(400)
-                .json({ error: "Cannot decrease quantity below 1" });
-            }
-            break;
-          case "delete":
-            update["$set"] = { "cart.$.status": "deleted" };
-            update["$set"] = { "cart.$.quantity": 0 };
-            break;
-          case "confirmed":
-            update["$set"] = { "cart.$.status": "confirmed" };
-            break;
-
-          case "wishlist_false":
-            update["$set"] = { "cart.$.wishlist": false };
-            break;
-
-          default:
-            return res.status(400).json({ error: "Invalid modifyType" });
-        }
-
-        const result = await userDb.updateOne(filter, update);
-
-        if (result.matchedCount > 0) {
-          res.json({ message: "Cart updated successfully" });
-          console.log("updated");
-        } else {
-          res.status(404).json({ error: "User or product not found" });
-          console.log("error");
-        }
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal Server Error" });
-      }
-    }); */
+    //--- modifying items in cart
     app.patch("/api/v1/modifyCart", async (req, res) => {
       try {
         let { data, email, modifyType } = req.body; // `data` is now an array of products
@@ -381,10 +301,103 @@ async function run() {
       }
     });
 
+    // ----------------------- -----------------------
+    // ----------------------- Order related operations
+    // ----------------------- -----------------------
+
+    // --- add a new product to cart
+    app.post("/api/v1/addOrders", async (req, res) => {
+      const { email, product, status } = req.body; // Expecting email, product data, and status in the request body
+      const { quantity: productQuantity } = product;
+
+      console.log(req.body);
+
+      try {
+        // Find the user and check if the product already exists in the cart
+        const user = await userDb.findOne({ email });
+
+        if (user) {
+          // Ensure the cart array exists
+          if (!user.orders) {
+            user.orders = [];
+          }
+
+          const productIndex = user.orders.findIndex(
+            (item) => item._id === product._id
+          );
+
+          let result;
+
+          if (productIndex !== -1) {
+            // if Product already exists in the cart
+
+            if (status === "pending") {
+              // Increase quantity if status is 'pending'
+              result = await userDb.updateOne(
+                { email, "orders._id": product._id },
+                {
+                  $set: {
+                    "orders.$.status": status,
+                    "orders.$.quantity": productQuantity,
+                  },
+                }
+              );
+
+              res.status(200).json({
+                message: "Product added to the cart ",
+                result,
+              });
+            } else if (status === "confirmed") {
+              // Only update the status if it's 'confirmed'
+              result = await userDb.updateOne(
+                { email, "orders._id": product._id },
+                { $set: { "orders.$.status": status } }
+              );
+
+              res.status(200).json({
+                message: "Your order has been confirmed ! ",
+                result,
+              });
+            }
+
+            // else if (status === "wishlist") {
+            //   // Only update the status if it's 'wishlist'
+            //   result = await userDb.updateOne(
+            //     { email, "cart._id": product._id },
+            //     { $set: { "cart.$.wishlist": true } }
+            //   );
+
+            //   res.status(200).json({
+            //     message: "Product added to the Wishlist",
+            //     result,
+            //   });
+            // }
+          } else {
+            // Product doesn't exist in the cart, so add it with a quantity of 1 and status
+            const newProduct = { ...product, quantity: productQuantity, status };
+            result = await userDb.updateOne(
+              { email },
+              { $push: { orders: newProduct } }
+            );
+
+            res.status(200).json({
+              message: "We have received your order.  ",
+              result,
+            });
+          }
+        } else {
+          // If the user doesn't exist, return an error
+          res.status(404).json({ message: "User not found" });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Error updating cart", error });
+      }
+    });
+
     //-- getting user info
     app.get("/api/v1/userInfo/:email", async (req, res) => {
       const { email } = req.params;
-      console.log(req.params);
       try {
         const user = await userDb.findOne({ email });
         if (user) {
@@ -401,7 +414,6 @@ async function run() {
     // User Registration
     app.post("/api/v1/register", async (req, res) => {
       const { name, email, password } = req.body;
-      console.log(req.body);
 
       // Check if email already exists
       const existingUser = await userDb.findOne({ email });
@@ -474,3 +486,81 @@ app.get("/", (req, res) => {
 app.listen(process.env.PORT, () => {
   console.log(`Listening from ${port}`);
 });
+
+// --- modifying cart - increase, decrease , delete, order confirmation
+/*     app.patch("/api/v1/modifyCart", async (req, res) => {
+      try {
+        const { data, email, modifyType } = req.body;
+        const { _id: productId } = data;
+        console.log({ modifyType });
+        // console.log(req.body);
+
+        const filter = { email, "cart._id": productId };
+        const update = {};
+
+        let currentQuantity;
+        // Step 1: Retrieve the current quantity
+        const user = await userDb.findOne(filter);
+        if (user) {
+          const cartItem = user.cart.find(
+            (item) => item._id.toString() === productId
+          );
+          if (cartItem) {
+            currentQuantity = cartItem.quantity;
+          } else {
+            return res.status(404).json({ error: "Product not found in cart" });
+          }
+        } else {
+          return res.status(404).json({ error: "User not found" });
+        }
+
+        switch (modifyType) {
+          case "increase":
+            if (currentQuantity < 5) {
+              update["$inc"] = { "cart.$.quantity": 1 };
+            } else {
+              return res
+                .status(400)
+                .json({ error: "Cannot increase quantity above 5" });
+            }
+            break;
+
+          case "decrease":
+            if (currentQuantity > 1) {
+              update["$inc"] = { "cart.$.quantity": -1 };
+            } else {
+              return res
+                .status(400)
+                .json({ error: "Cannot decrease quantity below 1" });
+            }
+            break;
+          case "delete":
+            update["$set"] = { "cart.$.status": "deleted" };
+            update["$set"] = { "cart.$.quantity": 0 };
+            break;
+          case "confirmed":
+            update["$set"] = { "cart.$.status": "confirmed" };
+            break;
+
+          case "wishlist_false":
+            update["$set"] = { "cart.$.wishlist": false };
+            break;
+
+          default:
+            return res.status(400).json({ error: "Invalid modifyType" });
+        }
+
+        const result = await userDb.updateOne(filter, update);
+
+        if (result.matchedCount > 0) {
+          res.json({ message: "Cart updated successfully" });
+          console.log("updated");
+        } else {
+          res.status(404).json({ error: "User or product not found" });
+          console.log("error");
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    }); */
