@@ -58,6 +58,8 @@ async function run() {
     app.post("/api/v1/addToCart", async (req, res) => {
       const { email, product, status } = req.body; // Expecting email, product data, and status in the request body
 
+      console.log(req.body);
+
       try {
         // Find the user and check if the product already exists in the cart
         const user = await userDb.findOne({ email });
@@ -140,6 +142,7 @@ async function run() {
               });
             }
           }
+          console.log({ result });
         } else {
           // If the user doesn't exist, return an error
           res.status(404).json({ message: "User not found" });
@@ -306,92 +309,256 @@ async function run() {
     // ----------------------- -----------------------
 
     // --- add a new product to cart
-    app.post("/api/v1/addOrders", async (req, res) => {
-      const { email, product, status } = req.body; // Expecting email, product data, and status in the request body
-      const { quantity: productQuantity } = product;
 
-      console.log(req.body);
+    // --- add a new product(s) to orders
+    // --- add new product(s) to orders
+    app.post("/api/v1/addOrders", async (req, res) => {
+      const { email, data: products, status } = req.body; // Expecting email, array of products, and status in the request body
 
       try {
-        // Find the user and check if the product already exists in the cart
+        // Find the user
         const user = await userDb.findOne({ email });
 
-        if (user) {
-          // Ensure the cart array exists
-          if (!user.orders) {
-            user.orders = [];
-          }
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
 
-          const productIndex = user.orders.findIndex(
-            (item) => item._id === product._id
+        // Ensure the orders array exists
+        if (!user.orders) {
+          user.orders = [];
+        }
+
+        let results = [];
+        let errors = [];
+
+        for (let product of products) {
+          const { quantity: productQuantity } = product;
+
+          // Get the current time
+          const orderTime = new Date();
+
+          // Create a new order entry
+          const newProduct = {
+            ...product,
+            quantity: productQuantity,
+            status,
+            orderTime,
+          };
+          const result = await userDb.updateOne(
+            { email },
+            { $push: { orders: newProduct } }
           );
 
-          let result;
-
-          if (productIndex !== -1) {
-            // if Product already exists in the cart
-
-            if (status === "pending") {
-              // Increase quantity if status is 'pending'
-              result = await userDb.updateOne(
-                { email, "orders._id": product._id },
-                {
-                  $set: {
-                    "orders.$.status": status,
-                    "orders.$.quantity": productQuantity,
-                  },
-                }
-              );
-
-              res.status(200).json({
-                message: "Product added to the cart ",
-                result,
-              });
-            } else if (status === "confirmed") {
-              // Only update the status if it's 'confirmed'
-              result = await userDb.updateOne(
-                { email, "orders._id": product._id },
-                { $set: { "orders.$.status": status } }
-              );
-
-              res.status(200).json({
-                message: "Your order has been confirmed ! ",
-                result,
-              });
-            }
-
-            // else if (status === "wishlist") {
-            //   // Only update the status if it's 'wishlist'
-            //   result = await userDb.updateOne(
-            //     { email, "cart._id": product._id },
-            //     { $set: { "cart.$.wishlist": true } }
-            //   );
-
-            //   res.status(200).json({
-            //     message: "Product added to the Wishlist",
-            //     result,
-            //   });
-            // }
-          } else {
-            // Product doesn't exist in the cart, so add it with a quantity of 1 and status
-            const newProduct = { ...product, quantity: productQuantity, status };
-            result = await userDb.updateOne(
-              { email },
-              { $push: { orders: newProduct } }
-            );
-
-            res.status(200).json({
-              message: "We have received your order.  ",
+          if (result.matchedCount > 0) {
+            results.push({
+              productId: product._id,
+              message: "New product added to orders",
               result,
             });
+          } else {
+            errors.push({
+              productId: product._id,
+              message: "Failed to add new product",
+            });
           }
+        }
+
+        // Handle responses based on the outcome
+        if (errors.length > 0) {
+          res.status(400).json({
+            message: "Some operations failed",
+            results,
+            errors,
+          });
         } else {
-          // If the user doesn't exist, return an error
-          res.status(404).json({ message: "User not found" });
+          res.status(200).json({
+            message: "All products processed successfully",
+            results,
+          });
         }
       } catch (error) {
         console.error(error);
-        res.status(500).json({ message: "Error updating cart", error });
+        res.status(500).json({ message: "Error processing orders", error });
+      }
+    });
+
+    //--- modifying items in orders
+    app.patch("/api/v1/modifyOrders", async (req, res) => {
+      try {
+        let { data, email, modifyType } = req.body; // `data` is now an array of products
+        if (!Array.isArray(data) || data.length === 0) {
+          data = [data];
+        }
+
+        const user = await userDb.findOne({ email });
+        if (!user) {
+          return res.status(404).json({ error: "User not found" });
+        }
+
+        const updates = data.map((product) => {
+          const { _id: productId, orderTime } = product;
+
+          // Update filter to match both _id and orderTime
+          const cartItem = user.orders.find(
+            (item) =>
+              item._id.toString() === productId &&
+              item.orderTime.toISOString() === new Date(orderTime).toISOString()
+          );
+
+          if (!cartItem) {
+            return {
+              productId,
+              status: 404,
+              message: "Product not found in order list",
+            };
+          }
+
+          let update = {};
+
+          switch (modifyType) {
+            case "cancel":
+              update["$set"] = {
+                "orders.$[elem].status": "cancelled",
+                "orders.$[elem].isCancelled": true,
+              };
+              break;
+
+            case "packaged":
+              update["$set"] = {
+                "orders.$[elem].status": "packaged",
+              };
+              break;
+
+            case "reviewed":
+              update["$set"] = {
+                "orders.$[elem].status": "reviewed",
+                "orders.$[elem].isCancelled": false,
+              };
+              break;
+
+            default:
+              return { productId, status: 400, message: "Invalid modifyType" };
+          }
+
+          return {
+            filter: {
+              email,
+              "orders._id": productId,
+              "orders.orderTime": new Date(orderTime),
+            },
+            update,
+            arrayFilters: [
+              { "elem._id": productId, "elem.orderTime": new Date(orderTime) },
+            ],
+            productId,
+          };
+        });
+
+        // Execute all updates
+        const results = await Promise.all(
+          updates.map(async (operation) => {
+            if (operation.status) {
+              return operation; // This is an error operation
+            }
+
+            const { filter, update, arrayFilters } = operation;
+            const result = await userDb.updateOne(filter, update, {
+              arrayFilters,
+            });
+
+            if (result.matchedCount > 0) {
+              return {
+                productId: operation.productId,
+                status: 200,
+                message: "Orders updated successfully",
+              };
+            } else {
+              return {
+                productId: operation.productId,
+                status: 404,
+                message: "User or product not found",
+              };
+            }
+          })
+        );
+
+        // Handle responses
+        const errors = results.filter((result) => result.status !== 200);
+        if (errors.length > 0) {
+          res.status(400).json({ message: "Some operations failed", errors });
+        } else {
+          res.json({ message: "All orders updated successfully" });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    app.post("/api/v1/addRatings", async (req, res) => {
+      const { email, data: product, rating } = req.body; // Expecting email, array of products, and status in the request body
+
+      try {
+        // Find the user
+        const user = await userDb.findOne({ email });
+
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        // Ensure the orders array exists
+        if (!user.ratings) {
+          user.ratings = [];
+        }
+
+        let results = [];
+        let errors = [];
+
+        console.log({rating});
+
+        // Get the current time
+        const orderTime = new Date();
+
+        // Create a new order entry
+        const newProduct = {
+          ...product,
+          rating,
+          orderTime,
+        };
+        const result = await userDb.updateOne(
+          { email },
+          { $push: { ratings: newProduct } }
+        );
+
+        if (result.matchedCount > 0) {
+          results.push({
+            productId: product._id,
+            message: "New product added to rating list",
+            result,
+          });
+        } else {
+          errors.push({
+            productId: product._id,
+            message: "Failed to add new ratings",
+          });
+        }
+
+        // Handle responses based on the outcome
+        if (errors.length > 0) {
+          res.status(400).json({
+            message: "Some operations failed",
+            results,
+            errors,
+          });
+        } else {
+          res.status(200).json({
+            message: "Ratings added successfully",
+            results,
+          });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Error processing ratings", error });
       }
     });
 
