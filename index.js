@@ -337,6 +337,12 @@ async function run() {
           // Get the current time
           const orderTime = new Date();
 
+          // creating a notification when user add a new order
+          const newNotification = {
+            details : 'We have received your order. We are now processing this order. ',
+            isRead : false 
+          };
+
           // Create a new order entry
           const newProduct = {
             ...product,
@@ -514,7 +520,7 @@ async function run() {
         let results = [];
         let errors = [];
 
-        console.log({rating});
+        console.log({ rating });
 
         // Get the current time
         const orderTime = new Date();
