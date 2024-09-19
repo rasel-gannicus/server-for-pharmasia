@@ -27,7 +27,18 @@ async function run() {
 
     // --- adding new user to database after user register or logged in client site
     app.post("/api/v1/addUserData", async (req, res) => {
-      const userData = req.body;
+      let userData = req.body;
+
+      let role = "";
+      if (
+        userData?.email == "admin@admin.com" ||
+        userData?.email == "admin@pharmasia.com"
+      ) {
+        role = "admin";
+      } else {
+        role = "user";
+      }
+      userData = { ...userData, role };
 
       const filter = { email: req.body.email };
       const options = { upsert: true }; // This will insert a new document if no document matches the filter.
@@ -57,8 +68,6 @@ async function run() {
     // --- add a new product to cart
     app.post("/api/v1/addToCart", async (req, res) => {
       const { email, product, status } = req.body; // Expecting email, product data, and status in the request body
-
-      console.log(req.body);
 
       try {
         // Find the user and check if the product already exists in the cart
@@ -142,7 +151,6 @@ async function run() {
               });
             }
           }
-          console.log({ result });
         } else {
           // If the user doesn't exist, return an error
           res.status(404).json({ message: "User not found" });
@@ -327,6 +335,9 @@ async function run() {
         if (!user.orders) {
           user.orders = [];
         }
+        if (!user.notifications) {
+          user.notifications = [];
+        }
 
         let results = [];
         let errors = [];
@@ -339,8 +350,9 @@ async function run() {
 
           // creating a notification when user add a new order
           const newNotification = {
-            details : 'We have received your order. We are now processing this order. ',
-            isRead : false 
+            details:
+              "We have received your order. We are now processing this order. ",
+            isRead: false,
           };
 
           // Create a new order entry
@@ -352,7 +364,7 @@ async function run() {
           };
           const result = await userDb.updateOne(
             { email },
-            { $push: { orders: newProduct } }
+            { $push: { orders: newProduct, notifications: newNotification } }
           );
 
           if (result.matchedCount > 0) {
@@ -395,6 +407,7 @@ async function run() {
         if (!Array.isArray(data) || data.length === 0) {
           data = [data];
         }
+        console.log(modifyType);
 
         const user = await userDb.findOne({ email });
         if (!user) {
@@ -438,6 +451,41 @@ async function run() {
             case "reviewed":
               update["$set"] = {
                 "orders.$[elem].status": "reviewed",
+                "orders.$[elem].isCancelled": false,
+              };
+              break;
+
+            case "shipping":
+              update["$set"] = {
+                "orders.$[elem].status": "shipping",
+                "orders.$[elem].isCancelled": false,
+              };
+              break;
+
+            case "processing":
+              update["$set"] = {
+                "orders.$[elem].status": "processing",
+                "orders.$[elem].isCancelled": false,
+              };
+              break;
+
+            case "shipped":
+              update["$set"] = {
+                "orders.$[elem].status": "shipped",
+                "orders.$[elem].isCancelled": false,
+              };
+              break;
+
+            case "delivered":
+              update["$set"] = {
+                "orders.$[elem].status": "delivered",
+                "orders.$[elem].isCancelled": false,
+              };
+              break;
+
+            case "newOrder" || "pending":
+              update["$set"] = {
+                "orders.$[elem].status": "newOrder",
                 "orders.$[elem].isCancelled": false,
               };
               break;
@@ -568,9 +616,177 @@ async function run() {
       }
     });
 
-    //-- getting user info
+
+    // --- modifying notifications
+    app.patch("/api/v1/modifyNotifications", async (req, res) => {
+      try {
+        const { email, modifyType } = req.body;
+        console.log("🚀 ~ app.patch ~ req.body:", req.body);
+
+        let updateQuery;
+        const newNotification = {
+          isRead: false,
+          createdAt: new Date(), // Add timestamp when the notification is created
+        };
+
+        // Use a switch case for modifyType logic
+        switch (modifyType) {
+          case "read":
+            // Set all notifications' isRead to true
+            updateQuery = {
+              $set: { "notifications.$[].isRead": true },
+            };
+            break;
+
+          case "processing":
+            // Add a new notification for "packaged"
+            updateQuery = {
+              $push: {
+                notifications: {
+                  details: "We are processing your order",
+                  isRead: false,
+                  createdAt: new Date(),
+                },
+              },
+            };
+            break;
+
+          case "packaged":
+            // Add a new notification for "packaged"
+            updateQuery = {
+              $push: {
+                notifications: {
+                  details: "Your product has been packaged",
+                  isRead: false,
+                  createdAt: new Date(),
+                },
+              },
+            };
+            break;
+
+          case "shipping":
+            // Add a new notification for "shipping"
+            updateQuery = {
+              $push: {
+                notifications: {
+                  details: "We are shipping your order 🚀",
+                  isRead: false,
+                  createdAt: new Date(),
+                },
+              },
+            };
+            break;
+
+          case "shipped":
+            // Add a new notification for "shipped"
+            updateQuery = {
+              $push: {
+                notifications: {
+                  details: "Your order has been shipped 🚀",
+                  isRead: false,
+                  createdAt: new Date(),
+                },
+              },
+            };
+            break;
+
+          case "delivered":
+            // Add a new notification for "shipped"
+            updateQuery = {
+              $push: {
+                notifications: {
+                  details:
+                    "Your order has been delivered . Don't forget to share your experince ! ",
+                  isRead: false,
+                  createdAt: new Date(),
+                },
+              },
+            };
+            break;
+
+          case "cancelled":
+            // Add a new notification for "shipped"
+            updateQuery = {
+              $push: {
+                notifications: {
+                  details: "Your order has been Cancelled !",
+                  isRead: false,
+                  createdAt: new Date(),
+                },
+              },
+            };
+            break;
+
+          default:
+            return res.status(400).json({ error: "Invalid modifyType" });
+        }
+
+        // Find the user and apply the update based on modifyType
+        const result = await userDb.updateOne({ email }, updateQuery);
+
+        if (result.matchedCount > 0) {
+          // Fetch user data after the update to sort notifications
+          const updatedUser = await userDb.findOne({ email });
+          if (updatedUser) {
+            // Sort notifications by createdAt in descending order (latest first)
+            const sortedNotifications = updatedUser.notifications.sort(
+              (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+            );
+
+            res.json({
+              message: `Notifications modified successfully for modifyType: ${modifyType}`,
+              notifications: sortedNotifications,
+            });
+          } else {
+            res.status(404).json({ error: "User not found after update" });
+          }
+        } else {
+          res.status(404).json({ error: "User not found" });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // --- getting notifications
+    app.get("/api/v1/notifications/:email", async (req, res) => {
+      const { email } = req.params;
+      try {
+        const user = await userDb.findOne({ email });
+        if (user) {
+          if (!user.notifications) {
+            user.notifications = [];
+          }
+
+          // Sort notifications by createdAt in descending order (latest first)
+          const sortedNotifications = user.notifications.sort(
+            (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+          );
+
+          res.status(200).json(sortedNotifications);
+        } else {
+          res.status(404).json({ message: "User not found" });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Error retrieving user data", error });
+      }
+    });
+
+    //-- getting all user info
+    app.get("/api/v1/allUsers", async (req, res) => {
+      console.log("hit the road");
+      const query = {};
+      const cursor = userDb.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    //-- getting single user info
     app.get("/api/v1/userInfo/:email", async (req, res) => {
       const { email } = req.params;
+
       try {
         const user = await userDb.findOne({ email });
         if (user) {
@@ -659,81 +875,3 @@ app.get("/", (req, res) => {
 app.listen(process.env.PORT, () => {
   console.log(`Listening from ${port}`);
 });
-
-// --- modifying cart - increase, decrease , delete, order confirmation
-/*     app.patch("/api/v1/modifyCart", async (req, res) => {
-      try {
-        const { data, email, modifyType } = req.body;
-        const { _id: productId } = data;
-        console.log({ modifyType });
-        // console.log(req.body);
-
-        const filter = { email, "cart._id": productId };
-        const update = {};
-
-        let currentQuantity;
-        // Step 1: Retrieve the current quantity
-        const user = await userDb.findOne(filter);
-        if (user) {
-          const cartItem = user.cart.find(
-            (item) => item._id.toString() === productId
-          );
-          if (cartItem) {
-            currentQuantity = cartItem.quantity;
-          } else {
-            return res.status(404).json({ error: "Product not found in cart" });
-          }
-        } else {
-          return res.status(404).json({ error: "User not found" });
-        }
-
-        switch (modifyType) {
-          case "increase":
-            if (currentQuantity < 5) {
-              update["$inc"] = { "cart.$.quantity": 1 };
-            } else {
-              return res
-                .status(400)
-                .json({ error: "Cannot increase quantity above 5" });
-            }
-            break;
-
-          case "decrease":
-            if (currentQuantity > 1) {
-              update["$inc"] = { "cart.$.quantity": -1 };
-            } else {
-              return res
-                .status(400)
-                .json({ error: "Cannot decrease quantity below 1" });
-            }
-            break;
-          case "delete":
-            update["$set"] = { "cart.$.status": "deleted" };
-            update["$set"] = { "cart.$.quantity": 0 };
-            break;
-          case "confirmed":
-            update["$set"] = { "cart.$.status": "confirmed" };
-            break;
-
-          case "wishlist_false":
-            update["$set"] = { "cart.$.wishlist": false };
-            break;
-
-          default:
-            return res.status(400).json({ error: "Invalid modifyType" });
-        }
-
-        const result = await userDb.updateOne(filter, update);
-
-        if (result.matchedCount > 0) {
-          res.json({ message: "Cart updated successfully" });
-          console.log("updated");
-        } else {
-          res.status(404).json({ error: "User or product not found" });
-          console.log("error");
-        }
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal Server Error" });
-      }
-    }); */
