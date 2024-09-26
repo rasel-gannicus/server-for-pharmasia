@@ -24,6 +24,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     const userDb = client.db("Pharmasia").collection("users");
+    const productDb = client.db("Pharmasia").collection("products");
 
     // --- adding new user to database after user register or logged in client site
     app.post("/api/v1/addUserData", async (req, res) => {
@@ -62,6 +63,39 @@ async function run() {
         res
           .status(500)
           .json({ message: "Error updating or creating user data", error });
+      }
+    });
+
+    // --- Updating user data (role or other fields) with PATCH request
+    app.patch("/api/v1/updateUser", async (req, res) => {
+      const { email, updates } = req.body;
+
+      if (!email || !updates) {
+        return res
+          .status(400)
+          .json({ message: "Email and updates are required." });
+      }
+
+      const filter = { email }; // Filter by user's email
+      const update = { $set: updates }; // Update only the fields provided in updates
+
+      try {
+        const result = await userDb.updateOne(filter, update);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        res.status(200).json({
+          message: "User updated successfully",
+          result,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({
+          message: "Error updating user data",
+          error,
+        });
       }
     });
 
@@ -316,8 +350,6 @@ async function run() {
     // ----------------------- Order related operations
     // ----------------------- -----------------------
 
-    // --- add a new product to cart
-
     // --- add a new product(s) to orders
     // --- add new product(s) to orders
     app.post("/api/v1/addOrders", async (req, res) => {
@@ -353,6 +385,7 @@ async function run() {
             details:
               "We have received your order. We are now processing this order. ",
             isRead: false,
+            createdAt: new Date(), // Add timestamp when the notification is created
           };
 
           // Create a new order entry
@@ -616,12 +649,10 @@ async function run() {
       }
     });
 
-
     // --- modifying notifications
     app.patch("/api/v1/modifyNotifications", async (req, res) => {
       try {
-        const { email, modifyType } = req.body;
-        console.log("🚀 ~ app.patch ~ req.body:", req.body);
+        const { email, modifyType, productTitle, productImg } = req.body;
 
         let updateQuery;
         const newNotification = {
@@ -646,6 +677,8 @@ async function run() {
                   details: "We are processing your order",
                   isRead: false,
                   createdAt: new Date(),
+                  productTitle,
+                  productImg,
                 },
               },
             };
@@ -659,6 +692,8 @@ async function run() {
                   details: "Your product has been packaged",
                   isRead: false,
                   createdAt: new Date(),
+                  productTitle,
+                  productImg,
                 },
               },
             };
@@ -672,6 +707,8 @@ async function run() {
                   details: "We are shipping your order 🚀",
                   isRead: false,
                   createdAt: new Date(),
+                  productTitle,
+                  productImg,
                 },
               },
             };
@@ -685,6 +722,8 @@ async function run() {
                   details: "Your order has been shipped 🚀",
                   isRead: false,
                   createdAt: new Date(),
+                  productTitle,
+                  productImg,
                 },
               },
             };
@@ -699,6 +738,8 @@ async function run() {
                     "Your order has been delivered . Don't forget to share your experince ! ",
                   isRead: false,
                   createdAt: new Date(),
+                  productTitle,
+                  productImg,
                 },
               },
             };
@@ -712,6 +753,8 @@ async function run() {
                   details: "Your order has been Cancelled !",
                   isRead: false,
                   createdAt: new Date(),
+                  productTitle,
+                  productImg,
                 },
               },
             };
@@ -776,7 +819,6 @@ async function run() {
 
     //-- getting all user info
     app.get("/api/v1/allUsers", async (req, res) => {
-      console.log("hit the road");
       const query = {};
       const cursor = userDb.find(query);
       const result = await cursor.toArray();
@@ -828,6 +870,126 @@ async function run() {
         success: true,
         message: "User registered successfully !",
       });
+    });
+
+    // ----------------------- -----------------------
+    // ----------------------- Product related operations
+    // ----------------------- -----------------------
+
+    // --- getting all products
+    app.get("/api/v1/allProducts", async (req, res) => {
+      const query = {};
+      const cursor = productDb.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    // --- getting single product with id
+    app.get("/api/v1/product/:id", async (req, res) => {
+      const { id } = req.params;
+      const product = await productDb.findOne({ _id: new ObjectId(id) });
+      if (product) {
+        res.status(200).json(product);
+        return;
+      } else {
+        res.status(404).json({ message: "Product not found" });
+        return;
+      }
+    });
+
+    // --- adding a new product
+    app.post("/api/v1/addProduct", async (req, res) => {
+      try {
+        const newProduct = {
+          Title: req.body.Title,
+          Category: req.body.Category,
+          Price: req.body.Price,
+          Images: req.body.Images,
+          Description: req.body.Description,
+          Brand: req.body.Brand,
+          Flashsale: req.body.Flashsale || false,
+          Ratings: req.body.Ratings || 0,
+        };
+
+        // Insert the new product into the collection
+        const result = await productDb.insertOne(newProduct);
+
+        if (result.acknowledged) {
+          res.status(201).send({
+            message: "Product added successfully",
+            productId: result.insertedId,
+          });
+        } else {
+          res.status(500).send({ message: "Failed to add product" });
+        }
+      } catch (error) {
+        console.error("Error adding product:", error);
+        res.status(500).send({ message: "Server error", error });
+      }
+    });
+
+    // --- updating an existing product
+    app.put("/api/v1/editProduct/:id", async (req, res) => {
+      const { id } = req.params; // Get the product ID from the request parameters
+      console.log("🚀 ~ app.put ~ id:", id);
+      try {
+        // Create an object with the fields that can be updated
+        const updatedProduct = {
+          Title: req.body.Title,
+          Category: req.body.Category,
+          Price: req.body.Price,
+          Images: req.body.Images,
+          Description: req.body.Description,
+          Brand: req.body.Brand,
+          Flashsale: req.body.Flashsale || false,
+          Ratings: req.body.Ratings || 0,
+        };
+
+        // Remove undefined fields from the updatedProduct object to avoid overwriting them as null
+        for (let key in updatedProduct) {
+          if (updatedProduct[key] === undefined) {
+            delete updatedProduct[key];
+          }
+        }
+
+        // Update the product in the collection using the product ID
+        const result = await productDb.updateOne(
+          { _id: new ObjectId(id) }, // Match product by ID
+          { $set: updatedProduct } // Set the new values for the fields
+        );
+
+        if (result.modifiedCount > 0) {
+          res.status(200).send({ message: "Product updated successfully" });
+        } else if (result.matchedCount > 0) {
+          res
+            .status(200)
+            .send({ message: "No changes detected in the product data" });
+        } else {
+          res.status(404).send({ message: "Product not found" });
+        }
+      } catch (error) {
+        console.error("Error updating product:", error);
+        res.status(500).send({ message: "Server error", error });
+      }
+    });
+
+    // --- deleting an existing product
+    app.delete("/api/v1/deleteProduct/:id", async (req, res) => {
+      try {
+        const { id } = req.params; // Get the product ID from the request parameters
+
+        // Delete the product from the collection using the product ID
+        const result = await productDb.deleteOne({ _id: new ObjectId(id) });
+
+        if (result.deletedCount > 0) {
+          res.status(200).send({ message: "Product deleted successfully" });
+        } else {
+          res.status(404).send({ message: "Product not found" });
+        }
+      } catch (error) {
+        console.error("Error deleting product:", error);
+        res.status(500).send({ message: "Server error", error });
+      }
     });
 
     // User Login
